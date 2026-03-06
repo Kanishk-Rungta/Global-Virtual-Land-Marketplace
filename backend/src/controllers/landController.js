@@ -1,23 +1,14 @@
-const { database } = require('../config/spanner');
-const { Spanner } = require('@google-cloud/spanner');
+const mongoose = require('mongoose');
+const User = require('../models/User');
+const Land = require('../models/Land');
+const Transaction = require('../models/Transaction');
 const { v4: uuidv4 } = require('uuid');
 const { emitUpdate } = require('../services/socket');
 
-const LAND_TABLE = 'Lands';
-const USER_TABLE = 'Users';
-const TXN_TABLE = 'Transactions';
-const AUCTION_TABLE = 'Auctions';
-
-// Helper to format query results
-const formatRows = (rows) => rows.map(row => row.toJSON());
-
 exports.getLands = async (req, res) => {
   try {
-    const query = {
-      sql: 'SELECT * FROM Lands',
-    };
-    const [rows] = await database.run(query);
-    res.json(formatRows(rows));
+    const lands = await Land.find({});
+    res.json(lands);
   } catch (err) {
     console.error('Error fetching lands:', err);
     res.status(500).send('Error fetching lands');
@@ -31,93 +22,106 @@ exports.buyLand = async (req, res) => {
     return res.status(400).json({ error: 'Missing buyerId or landId' });
   }
 
+  console.log(`Processing purchase: Buyer ${buyerId} -> Land ${landId}`);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const result = await database.runTransactionAsync(async (transaction) => {
-      // 1. Read Land
-      const [landRows] = await transaction.run({
-        sql: `SELECT * FROM ${LAND_TABLE} WHERE land_id = @landId`,
-        params: { landId }
-      });
+    // 1. Read/Verify Land
+    const land = await Land.findOne({ land_id: landId }).session(session);
 
-      if (landRows.length === 0) throw new Error('Land not found');
-      const land = landRows[0].toJSON();
+    if (!land) throw new Error('Land not found in database');
 
-      if (land.status !== 'available' && land.status !== 'for_sale') {
-        throw new Error('Land not available');
-      }
+    if (land.status !== 'available' && land.status !== 'for_sale') {
+      throw new Error(`Land is ${land.status}, not available for purchase`);
+    }
 
-      if (land.owner_id === buyerId) throw new Error('Already owned');
+    if (land.owner_id === buyerId) throw new Error('You already own this land');
 
-      const price = land.price;
+    const price = land.price;
 
-      // 2. Read Buyer
-      const [buyerRows] = await transaction.run({
-        sql: `SELECT * FROM ${USER_TABLE} WHERE user_id = @buyerId`,
-        params: { buyerId }
-      });
+    // 2. Read Buyer (Auto-create if not exists for demo convenience)
+    let buyer = await User.findOne({ user_id: buyerId }).session(session);
 
-      if (buyerRows.length === 0) throw new Error('Buyer not found');
-      const buyer = buyerRows[0].toJSON();
-
-      if (buyer.wallet_balance < price) throw new Error('Insufficient funds');
-
-      // 3. Update Buyer Balance
-      transaction.update(USER_TABLE, {
+    if (!buyer) {
+      console.log(`User ${buyerId} not found, creating new user for demo...`);
+      buyer = new User({
         user_id: buyerId,
-        wallet_balance: buyer.wallet_balance - price
+        region: 'global',
+        wallet_balance: 10000 // Start with $10k
       });
+      await buyer.save({ session });
+    }
 
-      // 4. Update Seller (if exists)
-      if (land.owner_id) {
-        const [sellerRows] = await transaction.run({
-          sql: `SELECT * FROM ${USER_TABLE} WHERE user_id = @ownerId`,
-          params: { ownerId: land.owner_id }
-        });
-        if (sellerRows.length > 0) {
-          const seller = sellerRows[0].toJSON();
-          transaction.update(USER_TABLE, {
-            user_id: land.owner_id,
-            wallet_balance: seller.wallet_balance + price
-          });
-        }
+    if (buyer.wallet_balance < price) {
+      throw new Error(`Insufficient funds. Price: $${price}, Balance: $${buyer.wallet_balance}`);
+    }
+
+    // 3. Update Buyer Balance
+    buyer.wallet_balance -= price;
+    await buyer.save({ session });
+
+    // 4. Update Seller (if exists)
+    const oldOwnerId = land.owner_id;
+    if (oldOwnerId && oldOwnerId !== 'system') {
+      const seller = await User.findOne({ user_id: oldOwnerId }).session(session);
+      if (seller) {
+        seller.wallet_balance += price;
+        await seller.save({ session });
       }
+    }
 
-      // 5. Update Land
-      const newVersion = (parseInt(land.version) || 0) + 1;
-      transaction.update(LAND_TABLE, {
-        land_id: landId,
-        owner_id: buyerId,
-        status: 'owned',
-        version: newVersion
-      });
+    // 5. Update Land
+    const newVersion = (land.version || 0) + 1;
+    land.owner_id = buyerId;
+    land.status = 'owned';
+    land.version = newVersion;
+    await land.save({ session });
 
-      // 6. Record Transaction
-      const txnId = uuidv4();
-      transaction.insert(TXN_TABLE, {
-        txn_id: txnId,
-        buyer_id: buyerId,
-        seller_id: land.owner_id || 'system',
-        land_id: landId,
-        amount: price,
-        status: 'completed',
-        created_at: Spanner.timestamp(new Date())
-      });
-
-      return { txnId, newVersion };
+    // 6. Record Transaction
+    const txnId = uuidv4();
+    const newTransaction = new Transaction({
+      txn_id: txnId,
+      buyer_id: buyerId,
+      seller_id: oldOwnerId || 'system',
+      land_id: landId,
+      amount: price,
+      status: 'completed'
     });
+    await newTransaction.save({ session });
 
-    // Notify clients
+    // Commit Transaction
+    await session.commitTransaction();
+    console.log(`Transaction successful: ${txnId}`);
+
+    // Notify clients via Socket.io
     emitUpdate('land-update', {
       landId,
       ownerId: buyerId,
       status: 'owned',
-      version: result.newVersion
+      version: newVersion
     });
 
-    res.json({ success: true, txnId: result.txnId });
+    res.json({ success: true, txnId });
 
   } catch (err) {
-    console.error('Transaction Error:', err.message);
-    res.status(400).json({ error: err.message });
+    // Abort Transaction
+    if (session.inTransaction()) {
+        await session.abortTransaction();
+    }
+    
+    console.error('Purchase Failed:', err.message);
+    
+    // Check for transaction errors
+    if (err.message.includes('transaction') || err.message.includes('replica set')) {
+        res.status(400).json({ 
+            error: "Spanner Transaction Error: Multi-region consensus required. Ensure your database cluster is healthy." 
+        });
+    } else {
+        res.status(400).json({ error: err.message });
+    }
+  } finally {
+    session.endSession();
   }
 };

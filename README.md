@@ -1,82 +1,73 @@
 # Global Virtual Land Marketplace
 
-A full-stack distributed system demonstrating a virtual land marketplace with strong consistency using Google Cloud Spanner.
+A full-stack distributed system demonstrating a virtual land marketplace with strong consistency and real-time updates.
 
 ## Architecture
 
-- **Frontend**: React, Three.js (Visualization), Socket.io Client
-- **Backend**: Node.js, Express, Socket.io, Google Cloud Spanner
-- **Database**: Google Cloud Spanner (Multi-region simulation)
+- **Frontend**: React, Three.js (Holographic Visualization), Socket.io Client
+- **Backend**: Node.js, Express, Socket.io, MongoDB (Mongoose)
+- **Database**: MongoDB (Supports persistence and transactions)
 
 ## Prerequisites
 
-- Node.js (v16+)
-- Google Cloud Project with Spanner Instance
-- Google Cloud SDK (authenticated)
+- **Node.js**: (v16+)
+- **MongoDB**: (v4.0+). **Important**: A **Replica Set** is required to support multi-document transactions (used for land purchases). For local development, you can use [mongodb-memory-server](https://github.com/nodkz/mongodb-memory-server) or a local replica set.
 
-## Setup
+## Setup & Running
 
-### 1. Database Setup
-
-Ensure your Google Cloud Spanner instance is ready.
-Update `backend/src/config/spanner.js` or set environment variables:
-- `GOOGLE_CLOUD_PROJECT`
-- `SPANNER_INSTANCE`
-- `SPANNER_DATABASE`
-
-Schema (see `docs/DATABASE.md`):
-- Tables: `Users`, `Lands`, `Transactions`, `Auctions`
-
-### 2. Backend Setup
+### 1. Backend Setup
 
 ```bash
 cd backend
 npm install
 ```
 
-**Running Regional Servers:**
-
-Open 3 terminal tabs to simulate regional servers:
-
-**Asia (Port 5001):**
-```bash
-npm run start:asia
+**Configure Environment Variables:**
+Create a `.env` file in the `backend/` directory (or update the existing one):
+```env
+MONGODB_URI=mongodb://localhost:27017/global-virtual-land-marketplace?replicaSet=rs0
+PORT=5001
+REGION=asia
 ```
 
-**US (Port 5002):**
+**Seed the Database:**
+This will create the 10x10 land grid and test users in your MongoDB instance.
 ```bash
-npm run start:us
+npm run seed
 ```
 
-**EU (Port 5003):**
-```bash
-npm run start:eu
-```
+**Running Regional Servers (Optional Simulation):**
+You can simulate multiple regional nodes by running them on different ports:
 
-### 3. Frontend Setup
+- **Asia (Port 5001):** `npm run start:asia`
+- **US (Port 5002):** `npm run start:us`
+- **EU (Port 5003):** `npm run start:eu`
+
+*Note: By default, the frontend expects these specific ports for its region-switching feature.*
+
+### 2. Frontend Setup
 
 ```bash
 cd frontend
 npm install
 npm start
 ```
+The frontend will start on [http://localhost:3000](http://localhost:3000).
 
-The frontend will start on http://localhost:3000.
+---
 
-## Usage
+## Usage Guide
 
-1. Open the frontend.
-2. Select a region from the dropdown (this switches the API endpoint).
-3. View the 10x10 Land Grid.
-   - Green: Available
-   - Red: Owned
-4. Click on a green land plot to select it.
-5. Click "Buy Land" in the sidebar.
-6. The ownership will update in real-time across all connected clients (open multiple tabs to test).
+1. **Explore the Grid**: Use your mouse to rotate and zoom the 3D land map.
+2. **Select Land**: Click on any **Green** (Available) plot to view its details in the right panel.
+3. **Acquire Land**: Click **"ACQUIRE LAND"** to purchase. The state will update to **Red** (Owned) across all connected devices in real-time.
+4. **Multi-Device Sync**: Open the app in two different browser windows or devices. When you buy land in one, the other will show a notification and update the map immediately via Socket.io.
+5. **Manual Refresh**: Use the **"REFRESH"** button in the navbar to manually re-sync the state with the database at any time.
 
 ## Key Features Implemented
 
-- **Distributed Transactions**: Buying land uses Spanner transactions to ensure atomicity.
-- **Optimistic Concurrency**: Uses `version` column to prevent lost updates.
-- **Real-time Updates**: Socket.io broadcasts ownership changes to all clients.
-- **Regional Simulation**: Frontend can switch between backend servers.
+- **Atomic Transactions**: Land purchases (updating buyer balance, seller balance, and land ownership) are handled as a single transaction in MongoDB.
+- **Persistence**: All data is saved to MongoDB. Unlike the previous version, restarting the server will not lose your progress.
+- **Optimistic Concurrency**: Uses a `version` field in the schema to prevent race conditions during simultaneous purchase attempts.
+- **Real-time Engine**: Socket.io broadcasts ownership changes (`land-update`) to all clients instantly.
+- **Metaverse Visuals**: High-fidelity 3D map built with Three.js and React Three Fiber.

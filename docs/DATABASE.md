@@ -1,50 +1,64 @@
-# Google Cloud Spanner Schema
+# MongoDB Schema (Migration from Spanner)
 
-## 1. Users Table
+## 1. Users Collection
 
-CREATE TABLE Users (
-user_id STRING(36) NOT NULL,
-region STRING(20),
-wallet_balance FLOAT64,
-created_at TIMESTAMP
-) PRIMARY KEY(user_id);
-
----
-
-## 2. Lands Table
-
-CREATE TABLE Lands (
-land_id STRING(36) NOT NULL,
-owner_id STRING(36),
-price FLOAT64,
-status STRING(20),
-version INT64
-) PRIMARY KEY(land_id);
-
-version column is used for optimistic concurrency control.
+```javascript
+{
+  user_id: { type: String, required: true, unique: true },
+  region: { type: String, maxLength: 20 },
+  wallet_balance: { type: Number, default: 0 },
+  created_at: { type: Date, default: Date.now }
+}
+```
 
 ---
 
-## 3. Transactions Table
+## 2. Lands Collection
 
-CREATE TABLE Transactions (
-txn_id STRING(36) NOT NULL,
-buyer_id STRING(36),
-seller_id STRING(36),
-land_id STRING(36),
-amount FLOAT64,
-status STRING(20),
-created_at TIMESTAMP
-) PRIMARY KEY(txn_id);
+```javascript
+{
+  land_id: { type: String, required: true, unique: true },
+  owner_id: { type: String, default: null },
+  price: { type: Number, required: true },
+  status: { type: String, enum: ['available', 'for_sale', 'owned'], default: 'available' },
+  version: { type: Number, default: 0 }
+}
+```
 
 ---
 
-## 4. Auctions Table
+## 3. Transactions Collection
 
-CREATE TABLE Auctions (
-auction_id STRING(36) NOT NULL,
-land_id STRING(36),
-highest_bid FLOAT64,
-highest_bidder STRING(36),
-end_time TIMESTAMP
-) PRIMARY KEY(auction_id);
+```javascript
+{
+  txn_id: { type: String, required: true, unique: true },
+  buyer_id: { type: String, required: true },
+  seller_id: { type: String, required: true },
+  land_id: { type: String, required: true },
+  amount: { type: Number, required: true },
+  status: { type: String, enum: ['completed', 'pending', 'failed'], default: 'completed' },
+  created_at: { type: Date, default: Date.now }
+}
+```
+
+---
+
+## 4. Auctions Collection
+
+```javascript
+{
+  auction_id: { type: String, required: true, unique: true },
+  land_id: { type: String, required: true },
+  highest_bid: { type: Number, default: 0 },
+  highest_bidder: { type: String, default: null },
+  end_time: { type: Date, required: true }
+}
+```
+
+---
+
+## Implementation Details
+
+- **Concurrency**: Optimistic concurrency control is managed via the `version` field.
+- **Transactions**: Multi-document transactions are used in `landController.js` to ensure atomicity when purchasing land. (Requires MongoDB Replica Set).
+- **Real-time**: Socket.io is used to broadcast ownership updates (`land-update`) to all connected clients.
