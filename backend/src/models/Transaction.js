@@ -1,13 +1,23 @@
-const mongoose = require('mongoose');
+const { database } = require('../config/db');
 
-const transactionSchema = new mongoose.Schema({
-  txn_id: { type: String, required: true, unique: true },
-  buyer_id: { type: String, required: true },
-  seller_id: { type: String, required: true },
-  land_id: { type: String, required: true },
-  amount: { type: Number, required: true },
-  status: { type: String, enum: ['completed', 'pending', 'failed'], default: 'completed' },
-  created_at: { type: Date, default: Date.now },
-});
+const createTransaction = async (txn, transaction = database) => {
+    const mutation = {
+        txn_id: txn.txn_id,
+        buyer_id: txn.buyer_id,
+        seller_id: txn.seller_id,
+        land_id: txn.land_id,
+        amount: txn.amount,
+        status: txn.status || 'completed',
+        created_at: 'spanner.commit_timestamp()'
+    };
+    
+    if (transaction && transaction.insert) {
+        transaction.insert('Transactions', mutation);    
+    } else {
+        await database.table('Transactions').insert(mutation);
+    }
+};
 
-module.exports = mongoose.model('Transaction', transactionSchema);
+module.exports = {
+   createTransaction
+};

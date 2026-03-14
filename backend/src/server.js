@@ -1,7 +1,8 @@
 require('dotenv').config();
 const http = require('http');
 const app = require('./app');
-const connectDB = require('./config/db');
+const { connectDB } = require('./config/db');
+const initSchema = require('./models/SpannerDB');
 const { initSocket } = require('./services/socket');
 
 const PORT = process.env.PORT || 5000;
@@ -18,6 +19,9 @@ const start = async () => {
   
   // Check Spanner Connection
   await connectDB();
+  
+  // Ensure schema exists
+  await initSchema();
 
   server.listen(PORT, () => {
     console.log(`Server running on port ${PORT} [Region: ${REGION}]`);

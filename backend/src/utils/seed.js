@@ -1,21 +1,25 @@
-const mongoose = require('mongoose');
-const connectDB = require('../config/db');
-const User = require('../models/User');
-const Land = require('../models/Land');
+const { connectDB } = require('../config/db');
+const initSchema = require('../models/SpannerDB');
+const { insertManyUsers, deleteManyUsers } = require('../models/User');
+const { insertManyLands, deleteManyLands } = require('../models/Land');
 const { v4: uuidv4 } = require('uuid');
 
 const seedData = async () => {
   await connectDB();
+  
+  // Ensure schema exists before populating
+  await initSchema();
 
-  // Clear existing data
-  await User.deleteMany({});
-  await Land.deleteMany({});
+  // Clear existing data (in a real scenario, use extreme caution)
+  console.log('Clearing existing data...');
+  await deleteManyUsers();
+  await deleteManyLands();
 
   // Seed Users
   const user1_id = uuidv4();
   const user2_id = uuidv4();
 
-  const users = await User.insertMany([
+  const usersToInsert = [
     {
       user_id: user1_id,
       region: 'us',
@@ -31,15 +35,16 @@ const seedData = async () => {
       region: 'global',
       wallet_balance: 0,
     }
-  ]);
+  ];
 
+  await insertManyUsers(usersToInsert);
   console.log('Users seeded');
 
   // Seed Lands (e.g., a 10x10 grid)
-  const lands = [];
+  const landsToInsert = [];
   for (let x = 0; x < 10; x++) {
     for (let y = 0; y < 10; y++) {
-      lands.push({
+      landsToInsert.push({
         land_id: `land-${x}-${y}`,
         owner_id: null,
         price: Math.floor(Math.random() * 500) + 100,
@@ -49,7 +54,7 @@ const seedData = async () => {
     }
   }
 
-  await Land.insertMany(lands);
+  await insertManyLands(landsToInsert);
   console.log('Lands seeded');
 
   console.log('Seeding complete. Use these user IDs for testing:');
